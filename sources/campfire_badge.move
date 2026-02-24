@@ -1,9 +1,6 @@
 /// Campfire Badge - Reputation registry, certificates (soulbound), awards (tradable), vouching
 module campfire::CampfireBadge {
     use campfire::camp::CAMP;
-    use sui::object::{Self, UID};
-    use sui::tx_context::{Self, TxContext};
-    use sui::transfer;
     use sui::coin::{Self, Coin};
     use sui::sui::SUI;
     use sui::event;
@@ -172,7 +169,7 @@ module campfire::CampfireBadge {
 
     // ==================== INIT ====================
 
-    fun init(ctx: &mut TxContext) {
+    fun init(ctx: &mut tx_context::TxContext) {
         let admin = tx_context::sender(ctx);
         let admin_cap = AdminCap {
             id: object::new(ctx),
@@ -214,7 +211,7 @@ module campfire::CampfireBadge {
 
     // ==================== HELPERS ====================
 
-    fun ensure_user_registry(config: &mut ReputationRegistry, addr: address, _ctx: &TxContext) {
+    fun ensure_user_registry(config: &mut ReputationRegistry, addr: address, _ctx: &tx_context::TxContext) {
         if (!table::contains(&config.user_registry, addr)) {
             table::add(&mut config.user_registry, addr, UserRecord {
                 tier: 0,
@@ -256,7 +253,7 @@ module campfire::CampfireBadge {
     fun promote_tier_if_eligible(
         config: &mut ReputationRegistry,
         addr: address,
-        ctx: &TxContext
+        ctx: &tx_context::TxContext
     ) {
         if (!table::contains(&config.user_registry, addr)) return;
 
@@ -288,7 +285,7 @@ module campfire::CampfireBadge {
     entry fun update_treasury(
         config: &mut ReputationRegistry,
         new_treasury: address,
-        ctx: &TxContext
+        ctx: &tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         assert!(tx_context::sender(ctx) == config.admin, ENotAdmin);
@@ -298,7 +295,7 @@ module campfire::CampfireBadge {
     entry fun update_fee(
         config: &mut ReputationRegistry,
         new_fee: u64,
-        ctx: &TxContext
+        ctx: &tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         assert!(tx_context::sender(ctx) == config.admin, ENotAdmin);
@@ -319,7 +316,7 @@ module campfire::CampfireBadge {
         platform_share_percent: u64,
         tier_upgrade_treasury_percent: u64,
         tier_upgrade_burn_percent: u64,
-        ctx: &TxContext
+        ctx: &tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         assert!(tx_context::sender(ctx) == config.admin, ENotAdmin);
@@ -343,7 +340,7 @@ module campfire::CampfireBadge {
     entry fun update_tier1_paid_min_verified(
         config: &mut ReputationRegistry,
         new_min: u64,
-        ctx: &TxContext
+        ctx: &tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         assert!(tx_context::sender(ctx) == config.admin, ENotAdmin);
@@ -389,7 +386,7 @@ module campfire::CampfireBadge {
         metadata_uri: vector<u8>,
         walrus_blob_id: vector<u8>,
         encrypted_blob_id: vector<u8>,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         assert!(tx_context::sender(ctx) == issuer, ENotIssuer);
@@ -442,7 +439,7 @@ module campfire::CampfireBadge {
         metadata_uri: vector<u8>,
         walrus_blob_id: vector<u8>,
         encrypted_blob_id: vector<u8>,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         let sender = tx_context::sender(ctx);
@@ -484,7 +481,7 @@ module campfire::CampfireBadge {
         config: &mut ReputationRegistry,
         mut certificate: Certificate,
         mut payment: Coin<CAMP>,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         let voucher = tx_context::sender(ctx);
@@ -544,7 +541,7 @@ module campfire::CampfireBadge {
     entry fun upgrade_to_tier1(
         config: &mut ReputationRegistry,
         mut payment: Coin<CAMP>,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         let sender = tx_context::sender(ctx);
@@ -592,7 +589,7 @@ module campfire::CampfireBadge {
     entry fun upgrade_to_tier2(
         config: &mut ReputationRegistry,
         mut payment: Coin<CAMP>,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         let sender = tx_context::sender(ctx);
@@ -642,7 +639,7 @@ module campfire::CampfireBadge {
         config: &mut ReputationRegistry,
         voucher_address: address,
         slashed_until_epoch: u64,
-        ctx: &TxContext
+        ctx: &tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         assert!(tx_context::sender(ctx) == config.admin, ENotAdmin);
@@ -661,7 +658,7 @@ module campfire::CampfireBadge {
     entry fun request_seal_access(
         config: &ReputationRegistry,
         certificate_id: address,
-        ctx: &TxContext
+        ctx: &tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         let requester = tx_context::sender(ctx);
@@ -691,7 +688,7 @@ module campfire::CampfireBadge {
         rank: vector<u8>,
         image_url: vector<u8>,
         metadata_uri: vector<u8>,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         let actual_payment = coin::value(&payment);
@@ -741,7 +738,7 @@ module campfire::CampfireBadge {
         rank: vector<u8>,
         image_url: vector<u8>,
         metadata_uri: vector<u8>,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         let actual_payment = coin::value(&payment);
@@ -787,7 +784,7 @@ module campfire::CampfireBadge {
         rank: vector<u8>,
         image_url: vector<u8>,
         metadata_uri: vector<u8>,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         assert!(tx_context::sender(ctx) == issuer, ENotIssuer);
 
@@ -821,7 +818,7 @@ module campfire::CampfireBadge {
         badge: BadgeNFT,
         mut payment: Coin<SUI>,
         new_owner: address,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         let sale_price = coin::value(&payment);
@@ -855,7 +852,7 @@ module campfire::CampfireBadge {
         badge: BadgeNFT,
         mut payment: Coin<CAMP>,
         new_owner: address,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         let sale_price = coin::value(&payment);
