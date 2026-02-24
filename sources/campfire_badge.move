@@ -79,7 +79,7 @@ module campfire::CampfireBadge {
     }
 
     /// Soulbound certificate - credentials (no store = not transferable)
-    struct Certificate has key {
+    public struct Certificate has key {
         id: UID,
         name: String,
         description: String,
@@ -94,7 +94,7 @@ module campfire::CampfireBadge {
     }
 
     /// Tradable award or ticket (has store = transferable with royalties)
-    struct BadgeNFT has key, store {
+    public struct BadgeNFT has key, store {
         id: UID,
         name: String,
         description: String,
