@@ -3,8 +3,9 @@
    version = "1.0.0"
    edition = "2024.beta"
 
-   [dependencies]
-   Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "b04060dc040e39f95cf1a36e57e045dd63dc75fe" }
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "b04060dc040e39f95cf1a36e57e045dd63dc75fe" }
+SuiSystem = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-system", rev = "b04060dc040e39f95cf1a36e57e045dd63dc75fe" }
    
    [addresses]
    campfire = "0x0"
