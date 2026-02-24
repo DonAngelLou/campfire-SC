@@ -7,6 +7,7 @@ module campfire::CampfireBadge {
     use sui::coin::{Self, Coin};
     use sui::sui::SUI;
     use sui::event;
+    use sui::dynamic_field;
     use sui::table::{Self, Table};
     use std::string::{Self, String};
 
@@ -34,29 +35,34 @@ module campfire::CampfireBadge {
     const TIER1_MIN_VERIFIED: u64 = 3;
     const TIER2_MIN_VERIFIED: u64 = 10;
     const TIER3_MIN_VERIFIED: u64 = 25;
+    const DEFAULT_TIER1_PAID_MIN_VERIFIED: u64 = 1;
     const TIER2_PAID_MIN_VERIFIED: u64 = 3;
     const VOUCHER_SHARE_PERCENT: u64 = 70;
     const PLATFORM_SHARE_PERCENT: u64 = 30;
     const CREATOR_ROYALTY_PERCENT: u64 = 5;
     const TIER_UPGRADE_TREASURY_PERCENT: u64 = 50;
     const TIER_UPGRADE_BURN_PERCENT: u64 = 50;
+    const BURN_ADDRESS: address = @0x0;
 
     // ==================== STRUCTS ====================
 
     /// Admin capability for migrate and config updates
-    struct AdminCap has key {
+    public struct AdminCap has key {
         id: UID,
     }
 
     /// User record in the reputation registry
-    struct UserRecord has store, copy, drop {
+    public struct UserRecord has store, copy, drop {
         tier: u8,
         verified_cert_count: u64,
         slashed_until_epoch: u64,
     }
 
+    /// Dynamic-field key for Tier 1 paid-path minimum verified requirement.
+    public struct Tier1PaidMinVerifiedKey has copy, drop, store {}
+
     /// Reputation registry and platform config (shared object)
-    struct ReputationRegistry has key {
+    public struct ReputationRegistry has key {
         id: UID,
         version: u64,
         admin: address,
@@ -108,7 +114,7 @@ module campfire::CampfireBadge {
 
     // ==================== EVENTS ====================
 
-    struct CertificateMintedEvent has copy, drop {
+    public struct CertificateMintedEvent has copy, drop {
         certificate_id: address,
         owner: address,
         issuer: address,
@@ -117,7 +123,7 @@ module campfire::CampfireBadge {
         is_native: bool,
     }
 
-    struct BadgeMintedEvent has copy, drop {
+    public struct BadgeMintedEvent has copy, drop {
         badge_id: address,
         recipient: address,
         issuer: address,
@@ -126,7 +132,7 @@ module campfire::CampfireBadge {
         price_paid: u64,
     }
 
-    struct BadgeAwardedEvent has copy, drop {
+    public struct BadgeAwardedEvent has copy, drop {
         badge_id: address,
         recipient: address,
         issuer: address,
@@ -134,31 +140,31 @@ module campfire::CampfireBadge {
         rank: String,
     }
 
-    struct BadgeTransferredEvent has copy, drop {
+    public struct BadgeTransferredEvent has copy, drop {
         badge_id: address,
         from: address,
         to: address,
         royalty_paid: u64,
     }
 
-    struct BadgeVerifiedEvent has copy, drop {
+    public struct BadgeVerifiedEvent has copy, drop {
         certificate_id: address,
         voucher: address,
         owner: address,
     }
 
-    struct TierChangedEvent has copy, drop {
+    public struct TierChangedEvent has copy, drop {
         user: address,
         old_tier: u8,
         new_tier: u8,
     }
 
-    struct VoucherSlashedEvent has copy, drop {
+    public struct VoucherSlashedEvent has copy, drop {
         voucher: address,
         new_tier: u8,
     }
 
-    struct SealAccessRequestedEvent has copy, drop {
+    public struct SealAccessRequestedEvent has copy, drop {
         certificate_id: address,
         requester: address,
         epoch: u64,
@@ -175,7 +181,7 @@ module campfire::CampfireBadge {
 
         let user_registry = table::new<address, UserRecord>(ctx);
 
-        let config = ReputationRegistry {
+        let mut config = ReputationRegistry {
             id: object::new(ctx),
             version: VERSION,
             admin,
@@ -195,6 +201,12 @@ module campfire::CampfireBadge {
             tier_upgrade_treasury_percent: TIER_UPGRADE_TREASURY_PERCENT,
             tier_upgrade_burn_percent: TIER_UPGRADE_BURN_PERCENT,
         };
+
+        dynamic_field::add(
+            &mut config.id,
+            Tier1PaidMinVerifiedKey {},
+            DEFAULT_TIER1_PAID_MIN_VERIFIED,
+        );
 
         transfer::share_object(config);
         transfer::transfer(admin_cap, admin);
@@ -218,6 +230,19 @@ module campfire::CampfireBadge {
         };
         let record = table::borrow(&config.user_registry, addr);
         record.tier
+    }
+
+    /// Migration-safe read: falls back to default when older objects do not have the dynamic field.
+    fun tier1_paid_min_verified_or_default(config: &ReputationRegistry): u64 {
+        if (dynamic_field::exists_<Tier1PaidMinVerifiedKey>(&config.id, Tier1PaidMinVerifiedKey {})) {
+            let min_ref = dynamic_field::borrow<Tier1PaidMinVerifiedKey, u64>(
+                &config.id,
+                Tier1PaidMinVerifiedKey {},
+            );
+            *min_ref
+        } else {
+            DEFAULT_TIER1_PAID_MIN_VERIFIED
+        }
     }
 
     fun is_slashed(config: &ReputationRegistry, addr: address, epoch: u64): bool {
@@ -314,10 +339,39 @@ module campfire::CampfireBadge {
         config.tier_upgrade_burn_percent = tier_upgrade_burn_percent;
     }
 
+    /// Update paid-path Tier 1 minimum verified count without changing shared object layout.
+    entry fun update_tier1_paid_min_verified(
+        config: &mut ReputationRegistry,
+        new_min: u64,
+        ctx: &TxContext
+    ) {
+        assert!(config.version == VERSION, EWrongVersion);
+        assert!(tx_context::sender(ctx) == config.admin, ENotAdmin);
+
+        if (dynamic_field::exists_<Tier1PaidMinVerifiedKey>(&config.id, Tier1PaidMinVerifiedKey {})) {
+            let min_ref = dynamic_field::borrow_mut<Tier1PaidMinVerifiedKey, u64>(
+                &mut config.id,
+                Tier1PaidMinVerifiedKey {},
+            );
+            *min_ref = new_min;
+        } else {
+            dynamic_field::add(&mut config.id, Tier1PaidMinVerifiedKey {}, new_min);
+        };
+    }
+
     /// Migrate registry to new package version (admin only)
     entry fun migrate(config: &mut ReputationRegistry, admin_cap: &AdminCap) {
         assert!(object::id(admin_cap) == config.admin_cap_id, ENotAdmin);
         assert!(config.version < VERSION, ENotUpgrade);
+
+        // Backfill dynamic-field config for older shared objects created before this key existed.
+        if (!dynamic_field::exists_<Tier1PaidMinVerifiedKey>(&config.id, Tier1PaidMinVerifiedKey {})) {
+            dynamic_field::add(
+                &mut config.id,
+                Tier1PaidMinVerifiedKey {},
+                DEFAULT_TIER1_PAID_MIN_VERIFIED,
+            );
+        };
         config.version = VERSION;
     }
 
@@ -346,7 +400,8 @@ module campfire::CampfireBadge {
             id: object::new(ctx),
             name: string::utf8(name),
             description: string::utf8(description),
-            rank: string::utf8(_rank),
+            // Native certificates are always verified at mint time.
+            rank: string::utf8(b"Verified"),
             image_url: string::utf8(image_url),
             issuer,
             owner: recipient,
@@ -427,8 +482,8 @@ module campfire::CampfireBadge {
     /// Tier 2+ user vouches for a pending legacy certificate
     entry fun vouch_for_legacy_certificate(
         config: &mut ReputationRegistry,
-        certificate: Certificate,
-        payment: Coin<CAMP>,
+        mut certificate: Certificate,
+        mut payment: Coin<CAMP>,
         ctx: &mut TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
@@ -441,36 +496,33 @@ module campfire::CampfireBadge {
         assert!(certificate.rank == string::utf8(b"Pending"), ENothPending);
 
         let paid = coin::value(&payment);
-        assert!(paid >= config.vouching_fee, EPaymentMismatch);
+        assert!(paid == config.vouching_fee, EPaymentMismatch);
 
         let voucher_share = (paid * config.voucher_share_percent) / 100;
         let platform_share = (paid * config.platform_share_percent) / 100;
+        assert!(voucher_share + platform_share <= paid, EInvalidFee);
 
-        let voucher_coin = coin::split(&mut payment, voucher_share, ctx);
-        let platform_coin = coin::split(&mut payment, platform_share, ctx);
-
-        transfer::public_transfer(voucher_coin, voucher);
-        transfer::public_transfer(platform_coin, config.treasury);
-        coin::destroy_zero(payment);
-
-        let owner = certificate.owner;
-        let cert_id = object::uid_to_address(&certificate.id);
-
-        let Certificate { id, name, description, rank: _, image_url, issuer, owner, awarded_at, metadata_uri, walrus_blob_id, encrypted_blob_id } = certificate;
-        let verified_cert = Certificate {
-            id,
-            name,
-            description,
-            rank: string::utf8(b"Verified"),
-            image_url,
-            issuer,
-            owner,
-            awarded_at,
-            metadata_uri,
-            walrus_blob_id,
-            encrypted_blob_id,
+        if (voucher_share > 0) {
+            let voucher_coin = coin::split(&mut payment, voucher_share, ctx);
+            transfer::public_transfer(voucher_coin, voucher);
         };
-        transfer::transfer(verified_cert, owner);
+
+        if (platform_share > 0) {
+            let platform_coin = coin::split(&mut payment, platform_share, ctx);
+            transfer::public_transfer(platform_coin, config.treasury);
+        };
+
+        // Route any unallocated remainder to treasury (covers rounding/split sums < 100).
+        if (coin::value(&payment) > 0) {
+            transfer::public_transfer(payment, config.treasury);
+        } else {
+            coin::destroy_zero(payment);
+        };
+
+        let cert_id = object::uid_to_address(&certificate.id);
+        let owner = certificate.owner;
+        certificate.rank = string::utf8(b"Verified");
+        transfer::transfer(certificate, owner);
 
         event::emit(BadgeVerifiedEvent {
             certificate_id: cert_id,
@@ -491,12 +543,13 @@ module campfire::CampfireBadge {
     /// Pay to activate Tier 1 (Explorer)
     entry fun upgrade_to_tier1(
         config: &mut ReputationRegistry,
-        payment: Coin<CAMP>,
+        mut payment: Coin<CAMP>,
         ctx: &mut TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
         let sender = tx_context::sender(ctx);
         let epoch = tx_context::epoch(ctx);
+        let tier1_paid_min_verified = tier1_paid_min_verified_or_default(config);
 
         assert!(!is_slashed(config, sender, epoch), ESlashed);
         ensure_user_registry(config, sender, ctx);
@@ -504,17 +557,31 @@ module campfire::CampfireBadge {
         {
             let record = table::borrow_mut(&mut config.user_registry, sender);
             assert!(record.tier == 0, EAlreadyTier1);
-            assert!(record.verified_cert_count >= 1, EInsufficientVerified); // min 1 for paid path
+            assert!(record.verified_cert_count >= tier1_paid_min_verified, EInsufficientVerified);
         };
 
         let paid = coin::value(&payment);
-        assert!(paid >= config.tier1_activation_fee, EPaymentMismatch);
+        assert!(paid == config.tier1_activation_fee, EPaymentMismatch);
 
         let treasury_share = (paid * config.tier_upgrade_treasury_percent) / 100;
+        let burn_share = (paid * config.tier_upgrade_burn_percent) / 100;
+        assert!(treasury_share + burn_share <= paid, EInvalidFee);
 
-        let treasury_coin = coin::split(&mut payment, treasury_share, ctx);
-        transfer::public_transfer(treasury_coin, config.treasury);
-        coin::destroy_zero(payment);
+        if (treasury_share > 0) {
+            let treasury_coin = coin::split(&mut payment, treasury_share, ctx);
+            transfer::public_transfer(treasury_coin, config.treasury);
+        };
+
+        if (burn_share > 0) {
+            let burn_coin = coin::split(&mut payment, burn_share, ctx);
+            transfer::public_transfer(burn_coin, BURN_ADDRESS);
+        };
+
+        if (coin::value(&payment) > 0) {
+            transfer::public_transfer(payment, config.treasury);
+        } else {
+            coin::destroy_zero(payment);
+        };
 
         let record = table::borrow_mut(&mut config.user_registry, sender);
         record.tier = 1;
@@ -524,7 +591,7 @@ module campfire::CampfireBadge {
     /// Pay to level up to Tier 2 (Veteran)
     entry fun upgrade_to_tier2(
         config: &mut ReputationRegistry,
-        payment: Coin<CAMP>,
+        mut payment: Coin<CAMP>,
         ctx: &mut TxContext
     ) {
         assert!(config.version == VERSION, EWrongVersion);
@@ -541,13 +608,27 @@ module campfire::CampfireBadge {
         };
 
         let paid = coin::value(&payment);
-        assert!(paid >= config.tier2_levelup_fee, EPaymentMismatch);
+        assert!(paid == config.tier2_levelup_fee, EPaymentMismatch);
 
         let treasury_share = (paid * config.tier_upgrade_treasury_percent) / 100;
+        let burn_share = (paid * config.tier_upgrade_burn_percent) / 100;
+        assert!(treasury_share + burn_share <= paid, EInvalidFee);
 
-        let treasury_coin = coin::split(&mut payment, treasury_share, ctx);
-        transfer::public_transfer(treasury_coin, config.treasury);
-        coin::destroy_zero(payment);
+        if (treasury_share > 0) {
+            let treasury_coin = coin::split(&mut payment, treasury_share, ctx);
+            transfer::public_transfer(treasury_coin, config.treasury);
+        };
+
+        if (burn_share > 0) {
+            let burn_coin = coin::split(&mut payment, burn_share, ctx);
+            transfer::public_transfer(burn_coin, BURN_ADDRESS);
+        };
+
+        if (coin::value(&payment) > 0) {
+            transfer::public_transfer(payment, config.treasury);
+        } else {
+            coin::destroy_zero(payment);
+        };
 
         let record = table::borrow_mut(&mut config.user_registry, sender);
         let old = record.tier;
@@ -601,7 +682,57 @@ module campfire::CampfireBadge {
 
     entry fun mint_badge_paid(
         config: &ReputationRegistry,
-        payment: Coin<SUI>,
+        mut payment: Coin<SUI>,
+        expected_price: u64,
+        recipient: address,
+        issuer: address,
+        name: vector<u8>,
+        description: vector<u8>,
+        rank: vector<u8>,
+        image_url: vector<u8>,
+        metadata_uri: vector<u8>,
+        ctx: &mut TxContext
+    ) {
+        assert!(config.version == VERSION, EWrongVersion);
+        let actual_payment = coin::value(&payment);
+        assert!(actual_payment == expected_price, EPaymentMismatch);
+
+        let platform_fee = (expected_price * config.platform_fee_percent) / 100;
+        let platform_coin = coin::split(&mut payment, platform_fee, ctx);
+
+        transfer::public_transfer(platform_coin, config.treasury);
+        transfer::public_transfer(payment, issuer);
+
+        let badge = BadgeNFT {
+            id: object::new(ctx),
+            name: string::utf8(name),
+            description: string::utf8(description),
+            rank: string::utf8(rank),
+            image_url: string::utf8(image_url),
+            issuer,
+            original_minter: recipient,
+            awarded_at: tx_context::epoch(ctx),
+            metadata_uri: string::utf8(metadata_uri),
+        };
+
+        let badge_id = object::uid_to_address(&badge.id);
+
+        event::emit(BadgeMintedEvent {
+            badge_id,
+            recipient,
+            issuer,
+            name: badge.name,
+            rank: badge.rank,
+            price_paid: expected_price,
+        });
+
+        transfer::public_transfer(badge, recipient);
+    }
+
+    /// CAMP-native paid mint path (SUI paid mint is kept for legacy compatibility)
+    entry fun mint_badge_paid_camp(
+        config: &ReputationRegistry,
+        mut payment: Coin<CAMP>,
         expected_price: u64,
         recipient: address,
         issuer: address,
@@ -688,7 +819,41 @@ module campfire::CampfireBadge {
     entry fun transfer_badge_with_royalty(
         config: &ReputationRegistry,
         badge: BadgeNFT,
-        payment: Coin<SUI>,
+        mut payment: Coin<SUI>,
+        new_owner: address,
+        ctx: &mut TxContext
+    ) {
+        assert!(config.version == VERSION, EWrongVersion);
+        let sale_price = coin::value(&payment);
+        let badge_id = object::uid_to_address(&badge.id);
+        let original_minter = badge.original_minter;
+        let from = tx_context::sender(ctx);
+
+        let creator_royalty = (sale_price * CREATOR_ROYALTY_PERCENT) / 100;
+        let platform_fee = (sale_price * config.platform_fee_percent) / 100;
+
+        let creator_coin = coin::split(&mut payment, creator_royalty, ctx);
+        let platform_coin = coin::split(&mut payment, platform_fee, ctx);
+
+        transfer::public_transfer(creator_coin, original_minter);
+        transfer::public_transfer(platform_coin, config.treasury);
+        transfer::public_transfer(payment, from);
+
+        event::emit(BadgeTransferredEvent {
+            badge_id,
+            from,
+            to: new_owner,
+            royalty_paid: creator_royalty,
+        });
+
+        transfer::public_transfer(badge, new_owner);
+    }
+
+    /// CAMP-native transfer path (SUI transfer is kept for legacy compatibility)
+    entry fun transfer_badge_with_royalty_camp(
+        config: &ReputationRegistry,
+        badge: BadgeNFT,
+        mut payment: Coin<CAMP>,
         new_owner: address,
         ctx: &mut TxContext
     ) {
@@ -733,6 +898,10 @@ module campfire::CampfireBadge {
 
     public fun get_platform_fee(config: &ReputationRegistry): u64 {
         config.platform_fee_percent
+    }
+
+    public fun get_tier1_paid_min_verified(config: &ReputationRegistry): u64 {
+        tier1_paid_min_verified_or_default(config)
     }
 
     public fun get_badge_name(badge: &BadgeNFT): String {

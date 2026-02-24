@@ -7,7 +7,7 @@ module campfire::camp {
     use sui::transfer;
 
     /// One-time witness for CAMP currency creation (ensures single TreasuryCap)
-    struct CAMP has drop {}
+    public struct CAMP has drop {}
 
     /// Initialize CAMP currency. Called once at package publish.
     /// Transfers TreasuryCap and CoinMetadata to the publisher.
