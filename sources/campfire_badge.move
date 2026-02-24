@@ -79,7 +79,7 @@ module campfire::CampfireBadge {
     }
 
     /// Soulbound certificate - credentials (no store = not transferable)
-    public struct Certificate has key {
+    struct Certificate has key {
         id: UID,
         name: String,
         description: String,
@@ -94,7 +94,7 @@ module campfire::CampfireBadge {
     }
 
     /// Tradable award or ticket (has store = transferable with royalties)
-    public struct BadgeNFT has key, store {
+    struct BadgeNFT has key, store {
         id: UID,
         name: String,
         description: String,
@@ -382,7 +382,7 @@ module campfire::CampfireBadge {
         config: &mut ReputationRegistry,
         name: vector<u8>,
         description: vector<u8>,
-        rank: vector<u8>,
+        _rank: vector<u8>,
         image_url: vector<u8>,
         metadata_uri: vector<u8>,
         walrus_blob_id: vector<u8>,
@@ -456,7 +456,7 @@ module campfire::CampfireBadge {
         let owner = certificate.owner;
         let cert_id = object::uid_to_address(&certificate.id);
 
-        let Certificate { id, name, description, rank: _, image_url, issuer, awarded_at, metadata_uri, walrus_blob_id, encrypted_blob_id } = certificate;
+        let Certificate { id, name, description, rank: _, image_url, issuer, owner, awarded_at, metadata_uri, walrus_blob_id, encrypted_blob_id } = certificate;
         let verified_cert = Certificate {
             id,
             name,
@@ -772,5 +772,64 @@ module campfire::CampfireBadge {
             cert.metadata_uri,
             cert.walrus_blob_id
         )
+    }
+
+    // ==================== TESTS ====================
+
+    #[test]
+    fun test_get_badge_info() {
+        let ctx = &mut tx_context::dummy();
+        let sender = tx_context::sender(ctx);
+
+        let badge = BadgeNFT {
+            id: object::new(ctx),
+            name: string::utf8(b"Test Badge"),
+            description: string::utf8(b"Test Description"),
+            rank: string::utf8(b"Gold"),
+            image_url: string::utf8(b"https://example.com/badge.png"),
+            issuer: sender,
+            original_minter: sender,
+            awarded_at: 100,
+            metadata_uri: string::utf8(b"https://example.com/metadata"),
+        };
+
+        let (name, desc, rank, issuer, minter, awarded_at) = get_badge_info(&badge);
+        assert!(name == string::utf8(b"Test Badge"), 0);
+        assert!(desc == string::utf8(b"Test Description"), 1);
+        assert!(rank == string::utf8(b"Gold"), 2);
+        assert!(issuer == sender, 3);
+        assert!(minter == sender, 4);
+        assert!(awarded_at == 100, 5);
+
+        transfer::public_transfer(badge, sender);
+    }
+
+    #[test]
+    fun test_get_certificate_info() {
+        let ctx = &mut tx_context::dummy();
+        let sender = tx_context::sender(ctx);
+
+        let cert = Certificate {
+            id: object::new(ctx),
+            name: string::utf8(b"LinkedIn Import"),
+            description: string::utf8(b"Legacy credential"),
+            rank: string::utf8(b"Pending"),
+            image_url: string::utf8(b""),
+            issuer: sender,
+            owner: sender,
+            awarded_at: 1,
+            metadata_uri: string::utf8(b"walrus://blob123"),
+            walrus_blob_id: string::utf8(b"blob_abc"),
+            encrypted_blob_id: string::utf8(b"seal_enc_xyz"),
+        };
+
+        let (name, _desc, rank, _issuer, owner, _awarded_at, _meta_uri, blob_id) = get_certificate_info(&cert);
+        assert!(name == string::utf8(b"LinkedIn Import"), 0);
+        assert!(rank == string::utf8(b"Pending"), 1);
+        assert!(owner == sender, 2);
+        assert!(blob_id == string::utf8(b"blob_abc"), 3);
+
+        let Certificate { id, name: _, description: _, rank: _, image_url: _, issuer: _, owner: _, awarded_at: _, metadata_uri: _, walrus_blob_id: _, encrypted_blob_id: _ } = cert;
+        object::delete(id);
     }
 }
