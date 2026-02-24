@@ -1,6 +1,5 @@
 /// Campfire Badge - Reputation registry, certificates (soulbound), awards (tradable), vouching
 module campfire::CampfireBadge {
-    friend campfire::campfire_tests;
     use campfire::camp::CAMP;
     use sui::object::{Self, UID};
     use sui::tx_context::{Self, TxContext};
@@ -25,9 +24,7 @@ module campfire::CampfireBadge {
     const ENotVoucherTier: u64 = 6;
     const ENothPending: u64 = 7;
     const EInsufficientVerified: u64 = 8;
-    const ENotTier0: u64 = 9;
     const EAlreadyTier1: u64 = 10;
-    const EAlreadyTier2: u64 = 11;
     const ENotTier1: u64 = 12;
     const ESlashed: u64 = 13;
     const ENotRecruiterTier: u64 = 14;
@@ -82,7 +79,7 @@ module campfire::CampfireBadge {
     }
 
     /// Soulbound certificate - credentials (no store = not transferable)
-    struct Certificate has key {
+    public struct Certificate has key {
         id: UID,
         name: String,
         description: String,
@@ -97,7 +94,7 @@ module campfire::CampfireBadge {
     }
 
     /// Tradable award or ticket (has store = transferable with royalties)
-    struct BadgeNFT has key, store {
+    public struct BadgeNFT has key, store {
         id: UID,
         name: String,
         description: String,
@@ -205,7 +202,7 @@ module campfire::CampfireBadge {
 
     // ==================== HELPERS ====================
 
-    fun ensure_user_registry(config: &mut ReputationRegistry, addr: address, ctx: &TxContext) {
+    fun ensure_user_registry(config: &mut ReputationRegistry, addr: address, _ctx: &TxContext) {
         if (!table::contains(&config.user_registry, addr)) {
             table::add(&mut config.user_registry, addr, UserRecord {
                 tier: 0,
@@ -333,7 +330,7 @@ module campfire::CampfireBadge {
         issuer: address,
         name: vector<u8>,
         description: vector<u8>,
-        rank: vector<u8>,
+        _rank: vector<u8>,
         image_url: vector<u8>,
         metadata_uri: vector<u8>,
         walrus_blob_id: vector<u8>,
@@ -349,7 +346,7 @@ module campfire::CampfireBadge {
             id: object::new(ctx),
             name: string::utf8(name),
             description: string::utf8(description),
-            rank: string::utf8(rank),
+            rank: string::utf8(_rank),
             image_url: string::utf8(image_url),
             issuer,
             owner: recipient,
@@ -373,9 +370,10 @@ module campfire::CampfireBadge {
         transfer::transfer(cert, recipient);
 
         // Increment verified count and promote tier
-        let record = table::borrow_mut(&mut config.user_registry, recipient);
-        record.verified_cert_count = record.verified_cert_count + 1;
-        drop(record);
+        {
+            let record = table::borrow_mut(&mut config.user_registry, recipient);
+            record.verified_cert_count = record.verified_cert_count + 1;
+        };
         promote_tier_if_eligible(config, recipient, ctx);
     }
 
@@ -458,9 +456,21 @@ module campfire::CampfireBadge {
         let owner = certificate.owner;
         let cert_id = object::uid_to_address(&certificate.id);
 
-        let mut cert = certificate;
-        cert.rank = string::utf8(b"Verified");
-        transfer::transfer(cert, owner);
+        let Certificate { id, name, description, rank: _, image_url, issuer, awarded_at, metadata_uri, walrus_blob_id, encrypted_blob_id } = certificate;
+        let verified_cert = Certificate {
+            id,
+            name,
+            description,
+            rank: string::utf8(b"Verified"),
+            image_url,
+            issuer,
+            owner,
+            awarded_at,
+            metadata_uri,
+            walrus_blob_id,
+            encrypted_blob_id,
+        };
+        transfer::transfer(verified_cert, owner);
 
         event::emit(BadgeVerifiedEvent {
             certificate_id: cert_id,
@@ -469,9 +479,10 @@ module campfire::CampfireBadge {
         });
 
         ensure_user_registry(config, owner, ctx);
-        let record = table::borrow_mut(&mut config.user_registry, owner);
-        record.verified_cert_count = record.verified_cert_count + 1;
-        drop(record);
+        {
+            let record = table::borrow_mut(&mut config.user_registry, owner);
+            record.verified_cert_count = record.verified_cert_count + 1;
+        };
         promote_tier_if_eligible(config, owner, ctx);
     }
 
@@ -490,16 +501,16 @@ module campfire::CampfireBadge {
         assert!(!is_slashed(config, sender, epoch), ESlashed);
         ensure_user_registry(config, sender, ctx);
 
-        let record = table::borrow_mut(&mut config.user_registry, sender);
-        assert!(record.tier == 0, EAlreadyTier1);
-        assert!(record.verified_cert_count >= 1, EInsufficientVerified); // min 1 for paid path
-        drop(record);
+        {
+            let record = table::borrow_mut(&mut config.user_registry, sender);
+            assert!(record.tier == 0, EAlreadyTier1);
+            assert!(record.verified_cert_count >= 1, EInsufficientVerified); // min 1 for paid path
+        };
 
         let paid = coin::value(&payment);
         assert!(paid >= config.tier1_activation_fee, EPaymentMismatch);
 
         let treasury_share = (paid * config.tier_upgrade_treasury_percent) / 100;
-        let burn_share = (paid * config.tier_upgrade_burn_percent) / 100;
 
         let treasury_coin = coin::split(&mut payment, treasury_share, ctx);
         transfer::public_transfer(treasury_coin, config.treasury);
@@ -523,16 +534,16 @@ module campfire::CampfireBadge {
         assert!(!is_slashed(config, sender, epoch), ESlashed);
         ensure_user_registry(config, sender, ctx);
 
-        let record = table::borrow_mut(&mut config.user_registry, sender);
-        assert!(record.tier == 1, ENotTier1);
-        assert!(record.verified_cert_count >= config.tier2_paid_min_verified, EInsufficientVerified);
-        drop(record);
+        {
+            let record = table::borrow_mut(&mut config.user_registry, sender);
+            assert!(record.tier == 1, ENotTier1);
+            assert!(record.verified_cert_count >= config.tier2_paid_min_verified, EInsufficientVerified);
+        };
 
         let paid = coin::value(&payment);
         assert!(paid >= config.tier2_levelup_fee, EPaymentMismatch);
 
         let treasury_share = (paid * config.tier_upgrade_treasury_percent) / 100;
-        let burn_share = (paid * config.tier_upgrade_burn_percent) / 100;
 
         let treasury_coin = coin::split(&mut payment, treasury_share, ctx);
         transfer::public_transfer(treasury_coin, config.treasury);
@@ -558,7 +569,6 @@ module campfire::CampfireBadge {
         if (!table::contains(&config.user_registry, voucher_address)) return;
 
         let record = table::borrow_mut(&mut config.user_registry, voucher_address);
-        let old_tier = record.tier;
         record.tier = 0;
         record.slashed_until_epoch = slashed_until_epoch;
         event::emit(VoucherSlashedEvent { voucher: voucher_address, new_tier: 0 });
